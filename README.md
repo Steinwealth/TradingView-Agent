@@ -1,4 +1,4 @@
-# TradingView Agent
+# 🤖 TradingView Agent
 
 **Version:** 3.7.0  
 **Last Updated:** February 2026  
@@ -17,8 +17,6 @@ It listens for TradingView webhook alerts and converts them into instant, margin
 Its purpose is simple:
 
 **Eliminate execution latency and reliability risk between TradingView signals and broker fills.**
-
-It works with any TradingView strategy that emits JSON via `alert()` (e.g. Ichimoku, trend-following, ORB). This system is not a trading strategy itself; it is the execution, monitoring, and capital orchestration layer that sits between signal generation (TradingView) and broker infrastructure.
 
 ### The Problem It Solves
 
@@ -159,7 +157,7 @@ This ensures full visibility into live trading activity without logging into the
 - **Execution** — Coinbase Advanced Trade (nano futures) and Binance USDⓈ-M; optional Base DEX spot bridge. Multi-account routing; margin-based position sizing with intraday/afterhours rate selection; ADV cap. Idempotent webhook handling with broker position verification before exits.
 - **Capital Management** — Virtual partitions (2–4 slices per account), isolated or cooperative styles; two-layer balance (virtual P&L per partition, shared real broker cash). Min-contract buffer for small accounts; partition-level capital enforcement.
 - **Monitoring & Safety** — 30-second agent-level exit loop (breakeven, RSI, trailing stop, stop loss, take profit, EOD auto-close, Ichimoku cloud). Contract expiry monitoring; commission cap auto-halt; duplicate-exit prevention and opposite-position auto-flatten. Telegram execution and EOD alerts.
-- **Infrastructure** — Declarative YAML config; Firestore-backed state; scale-to-zero serverless (weekend entry-blocking window); broker ↔ ledger reconciliation.
+- **Infrastructure** — Declarative YAML config; Firestore-backed state; scale-to-zero serverless (weekend entry-blocking window); broker ↔ ledger reconciliation. Patch-level and feature history: see `CHANGELOG.md` (or repository releases).
 
 > Always validate in DEMO mode before promoting to LIVE deployment.
 
@@ -192,7 +190,7 @@ The Agent does **not** define trading logic (entries/exits are determined by Tra
 - **Partition split options** – Presets such as `25/25/25/25`, `33/33/33`, `50/25/25`, and `50/50` can be applied to match risk preferences.
 - **Contract expiry protection** – Background monitor probes contract metadata and logs warnings before expiry (e.g., BIPZ2030). Use alerts to rotate contracts and temporarily disable entries.
 - **Demo & live modes** – Each account can run in `DEMO` (virtual ledger) or `LIVE` against real brokers without code changes.
-- **Min-contract buffer & small accounts** – Configurable buffer (default 30%) above broker minimums; if a partition's balance is below the required wallet size, the Agent skips once and sends a single Telegram alert with the exact amount needed. See `docs/features/SMALL_ACCOUNT_TRADING_GUIDE.md`.
+- **Min-contract buffer & small accounts** – Configurable buffer (default 30%) above broker minimums; if a partition's balance is below the required wallet size, the Agent skips once and sends a single Telegram alert with the exact amount needed. Symbols unlock automatically as the wallet grows. See `docs/features/SMALL_ACCOUNT_TRADING_GUIDE.md`.
 - **Risk management** – Capital caps, ADV guard, optional minimum balances per partition, strategy enable/disable toggles, and daily summaries for oversight.
 
 ### Partition Styles
@@ -202,7 +200,7 @@ The Agent does **not** define trading logic (entries/exits are determined by Tra
 | **Isolated** (default) | Each partition listens to specific `strategy_ids`. Only those partitions receive the alert. | Virtual balance + drawdown stay fully independent per partition/strategy. | EOD shows per-partition results (one-to-one with strategy charts). |
 | **Cooperative** | All partitions share the same strategy list. Incoming signals go to the next idle partition (FIFO). | Real account equity is rebalanced back to the configured split after each trade. | EOD highlights per-strategy performance; partitions only appear in the open-positions snapshot. |
 
-Use isolated when you want hard capital silos per chart, and cooperative when you want multiple slots that take signals in order to minimize skips while keeping per-trade capital capped.
+Use isolated when you want hard capital silos per chart, and cooperative when you want four slots that take signals in order to minimize skips while keeping per-trade capital capped.
 
 ### Preset TradingView Symbols (Coinbase nano futures)
 
@@ -230,9 +228,9 @@ Disable logging by omitting the payload from alerts or adjusting the helper in t
 
 1. **Webhook ingress** – Validates payload, resolves strategy, target accounts, and partitions.
 2. **Broker routing** – Selects broker client per account (Coinbase Advanced Trade demo/live, Binance, Base DEX).
-3. **Position sizing** – Margin-optimized within allocation using API rates (intraday/afterhours by entry time); ADV cap; max capital and per-position caps. Auto-close for afterhours oversize: see §8 and Execution Guarantees.
+3. **Position sizing** – Margin-optimized within 80% allocation using API rates (intraday/afterhours by entry time); ADV cap; max capital and per-position caps. Auto-close for afterhours oversize: see §8 and Execution Guarantees. **Example:** Partition $1,000 at 80% ($800); ETH-PERP LONG $3,000, 3×, 24.9375% afterhours → notional/contract 0.10 ETH × $3,000 = $300; margin/contract (20% buffer) ≈ $30 → max contracts ≈ 26; Agent uses real-time API rates.
 4. **Execution** – Market order (demo ledger or live broker); tracks legs and deployed cash. Close-opposite-before-opening when entry is opposite direction; coordinated with Agent exits (Execution Guarantees). Alerts include source (TradingView webhook / Agent Exit / Afterhours Position Checker) and exit reason.
-5. **Agent-level exit monitoring** – 30-second loop over open positions: breakeven, RSI, trailing stop, stop loss, take profit, EOD auto-close, Ichimoku cloud exits. Duplicate-exit prevention and broker position verification (Execution Guarantees). See `docs/AGENT_EXITS_AND_MONITORING_GUIDE.md` for presets.
+5. **Agent-level exit monitoring** – 30-second loop over open positions: breakeven, RSI, trailing stop, stop loss, take profit, EOD auto-close, Ichimoku cloud exits. Duplicate-exit prevention and broker position verification (Execution Guarantees). Ichimoku logic matches v14 Pine (Tenkan, Kijun, Senkou A/B); 1H presets per symbol (BTC, ETH, SOL, XRP). See `docs/AGENT_EXITS_AND_MONITORING_GUIDE.md`.
 6. **Post-trade** – Firestore state and trade history updated; Telegram alerts with source and exit reason.
 7. **Daily summary** – Scheduler aggregates realized P&L, mark-to-market for open legs, EOD report to Telegram.
 
@@ -251,11 +249,15 @@ Additional safeguards (daily loss halts, liquidation telemetry) are scaffolded b
 
 ### Overnight & Weekend Margin Policy (CFM/Derivatives)
 
-- **80/20 default** at 3× (≥20% free margin post-fill). Margin rate selection and auto-close are described in §8 and Execution Guarantees.
+Coinbase Derivatives uses higher leverage intraday and raises maintenance/initial margin overnight and on weekends. Agent behavior:
+
+- **80/20 default** at 3× (≥20% free margin post-fill). Margin rate selection and auto-close are described in §8 and Execution Guarantees; config: `config.yaml` → `coinbase_futures`, `docs/SETTINGS.md`.
 - **24/7 trading:** `general.disable_entries_fri_sun: false` allows entries over weekends; margin logic and auto-close protect against overnight margin calls.
 - **Weekend entry blocking:** `general.disable_entries_fri_sun: true` blocks new entries Fri 4am PT–Mon 1am PT (exits always allowed); enables scale-to-zero.
-- **Scale-to-zero:** Service stays up until all positions close, then scales to zero. Cloud Scheduler wakes Monday 4:00 AM ET. See `docs/features/DEPLOYMENT_SCALE_TO_ZERO.md`.
+- **Scale-to-zero:** Service stays up until all positions close, then scales to zero (40–50% Cloud Run savings). Cloud Scheduler wakes Monday 4:00 AM ET. See `docs/features/DEPLOYMENT_SCALE_TO_ZERO.md`.
+- **Holiday guard:** Blocks entries 24h before/after US market holidays (ET); exits unaffected. Calendar: rules-based + optional low-volume days + manual dates in config.
 - **Commission cap** (default 0.04%) and broker retry/verify for blocked exits (see Execution Guarantees).
+- **Cooperative partitions:** Reconciler keeps virtual balances and risk telemetry aligned with broker as requirements change.
 
 ---
 
@@ -275,6 +277,8 @@ Additional safeguards (daily loss halts, liquidation telemetry) are scaffolded b
 Expected baseline: ~$25–$26 per month with scale-to-zero (dominated by the TradingView subscription). Always-on deployment adds ~$15/mo. Live trading incurs additional broker commissions according to trade volume.
 
 **Cost Optimization:** Enable scale-to-zero (`min-instances: 0`) and weekend entry blocking (`disable_entries_fri_sun: true`) to save 40–50% on Cloud Run costs. See `docs/features/DEPLOYMENT_SCALE_TO_ZERO.md` for setup.
+
+The system is intentionally engineered so that infrastructure cost remains negligible relative to strategy performance and broker fees, preserving capital efficiency.
 
 ---
 
@@ -319,10 +323,10 @@ Key sections to review:
 ```yaml
 general:
   local_timezone: America/Los_Angeles     # Used for Telegram timestamps & scheduler
-  capital_allocation_pct: 80.0           # Default % of partition equity per entry (70% recommended for live 3×)
-  max_position_allocation_pct: 100.0    # Cap for total capital deployed per symbol
-  min_contract_buffer_pct: 30.0         # Buffer above broker minimums (default 30%)
-  disable_entries_fri_sun: true         # Block new entries Fri 4am PT–Mon 1am PT (exits allowed); enables scale-to-zero
+  capital_allocation_pct: 80.0            # Default % of partition equity per entry (70% recommended for live 3×)
+  max_position_allocation_pct: 100.0      # Cap for total capital deployed per symbol
+  min_contract_buffer_pct: 30.0           # Buffer above broker minimums (default 30%; see docs/features/SMALL_ACCOUNT_TRADING_GUIDE.md)
+  disable_entries_fri_sun: true            # Block new entries Fri 4am PT–Mon 1am PT (exits allowed); enables scale-to-zero (default true)
   demo_starting_balance: 2000.0         # Starting balance for DEMO accounts (USD)
 
 strategies:
@@ -352,10 +356,35 @@ accounts:
           - ichimoku-coinbase-eth-5m
           - ichimoku-coinbase-sol-5m
           - ichimoku-coinbase-xrp-5m
-      # ... additional partitions as needed
+      - id: "25%-2-3x"
+        allocation_pct: 25.0
+        leverage: 3
+        strategy_ids:
+          - ichimoku-coinbase-btc-5m
+          - ichimoku-coinbase-eth-5m
+          - ichimoku-coinbase-sol-5m
+          - ichimoku-coinbase-xrp-5m
+      - id: "25%-3-3x"
+        allocation_pct: 25.0
+        leverage: 3
+        strategy_ids:
+          - ichimoku-coinbase-btc-5m
+          - ichimoku-coinbase-eth-5m
+          - ichimoku-coinbase-sol-5m
+          - ichimoku-coinbase-xrp-5m
+      - id: "25%-4-3x"
+        allocation_pct: 25.0
+        leverage: 3
+        strategy_ids:
+          - ichimoku-coinbase-btc-5m
+          - ichimoku-coinbase-eth-5m
+          - ichimoku-coinbase-sol-5m
+          - ichimoku-coinbase-xrp-5m
 ```
 
 > **Tip:** For isolated style, give each partition a single `strategy_id` so the capital stays dedicated to that chart. For cooperative style, list every strategy on each partition so the FIFO queue can pick any open slot.
+
+For cooperative partitions set `partition_style: cooperative` and the manager will rebalance shares whenever the cooperative rebalance routine executes.
 
 ### Trading Enable/Disable Toggle
 
@@ -382,7 +411,7 @@ Set `risk_management.max_commission_rate_pct` (default `0.04` = 0.04%) to guard 
 If any live fill reports a commission higher than that percentage of the filled notional:
 
 - The agent blocks new entries (exits still run so positions can close normally).
-- Telegram posts **"COMMISSION CAP TRIGGERED"** with the observed/allowed rates.
+- Telegram posts **"🧾 COMMISSION CAP TRIGGERED"** with the observed/allowed rates.
 - Clear the cap via `/trading/enable` (or redeploy) once the broker confirms fees are back under the cap.
 
 ### 10.4 Deploy to Cloud Run
@@ -427,7 +456,7 @@ echo "Webhook endpoint: $AGENT_URL/webhook"
 ./setup_cloud_scheduler.sh
 ```
 
-This creates Cloud Scheduler jobs for automatic scale-to-zero on weekends and daily EOD reports. See `docs/features/DEPLOYMENT_SCALE_TO_ZERO.md` for details.
+This creates 6 Cloud Scheduler jobs for automatic scale-to-zero on weekends and daily EOD reports. See `docs/features/DEPLOYMENT_SCALE_TO_ZERO.md` for details.
 
 > If you do not pass Telegram secrets the notifier will stay disabled and log the rendered messages.
 
@@ -453,14 +482,14 @@ alert(
 
 | Field | Required | Notes |
 |-------|----------|-------|
-| `strategy_id` | Yes | Maps to entries in `strategies` section of `config.yaml`. |
-| `side` | Yes | Accepts `buy`, `sell`, `exit` (aliases: long/short/close). |
-| `price` | Optional | Used for logging / validation (no pricing decisions are made). |
-| `symbol` | Optional | Used in alerts when supplied. |
-| `bar_time`, `timestamp`, `cid`, `client_tag` | Optional | Metadata (improves idempotency). |
-| `leverage`, `qty_pct`, `qty_usdt`, `qty_units` | Optional | Overrides; defaults come from the partition & strategy config. |
-| `tp_pct`, `sl_pct`, `tp_price`, `sl_price` | Optional | Currently logged only (no automatic TP/SL placement in demo mode). |
-| `historical_enhancer` | Optional | Logged verbatim for research (no enrichment at runtime). |
+| `strategy_id` | ✅ | Maps to entries in `strategies` section of `config.yaml`. |
+| `side` | ✅ | Accepts `buy`, `sell`, `exit` (aliases: long/short/close). |
+| `price` | ▶︎ | Used for logging / validation (no pricing decisions are made). |
+| `symbol` | ▶︎ | Optional; used in alerts when supplied. |
+| `bar_time`, `timestamp`, `cid`, `client_tag` | ▶︎ | Optional metadata (improves idempotency). |
+| `leverage`, `qty_pct`, `qty_usdt`, `qty_units` | ▶︎ | Optional overrides; defaults come from the partition & strategy config. |
+| `tp_pct`, `sl_pct`, `tp_price`, `sl_price` | ▶︎ | Currently logged only (no automatic TP/SL placement in demo mode). |
+| `historical_enhancer` | ▶︎ | Logged verbatim for research (no enrichment at runtime). |
 
 Payloads that omit required fields return HTTP 400 with validation details.
 
@@ -480,16 +509,19 @@ Payloads that omit required fields return HTTP 400 with validation details.
 | `GET` | `/scale-check` | Scale-to-zero eligibility (open positions, weekend). Used by Cloud Scheduler. |
 | `GET` | `/eod/trigger` | Trigger EOD summary (Cloud Scheduler; requires `admin_secret`). |
 
-Admin/runtime: `POST /trading/disable`, `POST /trading/enable`, `POST /kill-switch`, `POST /reconcile/run`. Full endpoint list: see `docs/TRADINGVIEW_AGENT_GUIDE.md` and `docs/AGENT_FEATURES_GUIDE.md`.
+Admin/runtime: `POST /trading/disable`, `POST /trading/enable`, `POST /kill-switch`, `POST /reconcile/run`. Full endpoint list, including `/positions/unified`, `/pnl/realtime`, `/exit-monitor/status`, and debug routes: see `docs/TRADINGVIEW_AGENT_GUIDE.md` and `docs/AGENT_FEATURES_GUIDE.md`.
 
 ---
 
 ## 13. Supported Strategies & Presets
 
-- **Easy Ichimoku v14 (Coinbase nano futures, 5m & 1h):** Production-ready presets for BTC, ETH, SOL, XRP. Alert payloads include `strategy_id` and optional `historical_enhancer`. See `docs/strategies/EASY_ICHIMOKU_GUIDE.md` for preset and alert details.
-- **Multi-account capability:** A single `strategy_id` can drive multiple accounts (e.g., demo + live, or different leverage partitions) without changing the TradingView alert.
+- **Easy Ichimoku v14 (Coinbase nano futures, 5m & 1h):** Production-ready presets for BTC, ETH, SOL, XRP. Alert payloads include `strategy_id` and `historical_enhancer`. Evidence and forward test results are in the strategy README.
+- **Multi-account capability:** A single `strategy_id` can drive multiple accounts (e.g., demo + live, or 1x + 3x partitions) without changing the TradingView alert.
 - **Custom strategies:** Any TradingView script that calls `strategy.entry()` / `strategy.close()` and sends JSON via `alert()` can integrate. Map the custom `strategy_id` to a YAML strategy and partitions accordingly.
-- **Preset documentation:** `docs/strategies/EASY_ICHIMOKU_GUIDE.md`, `docs/brokers/COINBASE_SETUP_GUIDE.md`, `docs/TRADINGVIEW_STRATEGY_ALERTS_GUIDE.md`.
+- **Preset documentation:**
+  - `docs/strategies/EASY_ICHIMOKU_GUIDE.md`
+  - `docs/brokers/COINBASE_SETUP_GUIDE.md`
+  - `docs/TRADINGVIEW_STRATEGY_ALERTS_GUIDE.md`
 
 ---
 
@@ -498,6 +530,7 @@ Admin/runtime: `POST /trading/disable`, `POST /trading/enable`, `POST /kill-swit
 1. **Deploy in DEMO** – Confirm `/health` returns `status: degraded` only until the first heartbeat; after the broker monitor runs it should flip to `healthy`.
 2. **Reset ledger** – `POST /demo/reset/{account_id}` before starting a new test cycle (use the account id from your config, e.g. `coinbase-main`).
 3. **Send test webhook** – Trigger TradingView alert or POST manually to `/webhook`; watch Cloud Run logs for partition initialization and execution details.
+   - After the execution alert, confirm the leg is listed in `/health` → `partition_accounts_summary` (or `/demo/positions/{account_id}` in demo mode) before the exit signal arrives.
 4. **Verify demo balance** – `GET /demo/balance/{account_id}` should show the starting balance from `general.demo_starting_balance` in config (default **$2000**), then update after exits.
 5. **Check capital exhaustion flow** – Fire two entries back to back; second may be skipped with a Telegram note when partition capital is exhausted. ADV cap adjustments scale the fill size and still execute (entries are never blocked by ADV cap).
 6. **Validate exit logic** – Ensure `close`/`exit` alerts liquidate every leg for the symbol and release deployed cash.
@@ -509,6 +542,8 @@ Admin/runtime: `POST /trading/disable`, `POST /trading/enable`, `POST /kill-swit
 
 ## 15. Roadmap & Known Gaps
 
+These items are present in older documentation but currently under active development:
+
 - Expanded REST surface (`/positions`, `/partitions`, `/kill-switch`, `/balances`).
 - Automatic stop-loss / take-profit placement for live brokers.
 - Risk dashboards (liquidation distance, daily loss halts surfaced via API).
@@ -519,17 +554,21 @@ Contributions or issue reports are welcome – open a PR or note gaps alongside 
 
 ---
 
-## 16. Documentation Map
+## 16. Support & Documentation Map
 
-- `docs/TRADINGVIEW_AGENT_GUIDE.md` – end-to-end deployment + operations manual.
+- **`EXECUTIVE_SUMMARY.md`** (if present) – high-level overview for stakeholders (what the Agent is, why it matters, capabilities, documentation map).
+- `docs/TRADINGVIEW_AGENT_GUIDE.md` – end-to-end deployment + operations manual (kept in sync with this README).
 - `docs/SETTINGS.md` – field-by-field explanation of `config.yaml` and environment toggles.
 - `docs/AGENT_FEATURES_GUIDE.md` – partition styles, strategy ledger, broker safety loop, and other agent features.
 - `docs/AGENT_EXITS_AND_MONITORING_GUIDE.md` – exit monitoring, position sync, and health checks.
+- `docs/ALERT_SYSTEMS_OVERVIEW.md` – dual alert architecture: TradingView → Agent webhooks vs Agent → Telegram notifications.
 - `docs/TRADINGVIEW_STRATEGY_ALERTS_GUIDE.md` – 4-panel layout, presets, and webhook alert setup.
 - `docs/AGENT_TELEGRAM_ALERTS_GUIDE.md` – alert examples and formatting notes.
 - `docs/features/DEPLOYMENT_SCALE_TO_ZERO.md` – scale-to-zero setup, weekend entry blocking, Cloud Scheduler jobs, cost savings.
 - `docs/features/VIRTUAL_PARTITIONS_COMPLETE.md` – virtual partitions: two-layer balance, sync, liquidation protection.
 - `docs/features/SMALL_ACCOUNT_TRADING_GUIDE.md` – min-contract buffer, partition-aware skips, scaling from small wallets.
-- `docs/brokers/COINBASE_SETUP_GUIDE.md` – Coinbase Derivatives setup, product IDs, contract minimums, presets.
+- `docs/brokers/COINBASE_SETUP_GUIDE.md` – Coinbase Derivatives setup, product IDs, contract minimums, presets (primary for nano futures).
 - `docs/brokers/MARGIN_RISK_AND_LEVERAGE_GUIDE.md` – intraday vs overnight margin, buffer policy, guardrails.
 - `docs/brokers/*.md` – other broker-specific setup (Binance, etc.).
+
+For historical context, refer to `README_V3.0_REFERENCE.md` if present in the repository; rely on this README and the guides above for the live stack.
