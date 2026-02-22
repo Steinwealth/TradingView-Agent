@@ -184,11 +184,11 @@ The Agent does **not** define trading logic (entries/exits are determined by Tra
 - **Single-alert TradingView workflow** – One webhook per chart using `{{strategy.order.action}}` placeholders drives buy/sell/exit logic.
 - **Multi-account routing** – Multiple accounts can subscribe to the same `strategy_id`, each with its own broker, leverage and mode.
 - **Dynamic position sizing** – Global and per-strategy capital allocation settings (percent or fixed) align live sizing with backtests.
-- **ADV Cap (Slip Guard)** – Caps position sizes to a percentage of Average Daily Volume (default 1%). Orders are always executed but scaled down if they exceed the ADV cap—entries are never blocked.
-- **Multi-broker adapters** – Coinbase (Advanced Trade), Binance USDⓈ-M, and Base DEX spot are supported; others can be added via `brokers/*.py`.
+- **ADV Cap (Slip Guard)** – Aggregates projected exposure across partitions and trims or skips orders to keep requests inside liquidity guardrails (default 1% ADV; entries are never blocked when trimmed—orders execute at reduced size or are skipped with logging).
+- **Multi-broker adapters** – Coinbase (Advanced Trade), Binance USDⓈ-M, and Base DEX spot are supported today; others can be added via `brokers/*.py`.
 - **Virtual account partitions** – 2–4 virtual slices per broker account with independent balances, leverage, strategy lists and trade histories.
 - **Partition styles** – `isolated` compounding or `cooperative` rebalance-to-split; switchable through `config.yaml`.
-- **Cooperative routing** – In `cooperative` mode the agent assigns each new entry signal to the next available partition (FIFO). A partition must be idle (no open position) before it receives another signal.
+- **Cooperative routing** – In `cooperative` mode the agent assigns each new entry signal to the next available partition (FIFO). A partition must be idle (no open position) before it receives another signal, ensuring four concurrent trades max without symbol affinity and preventing leg skips when unused capital exists.
 - **Partition split options** – Presets such as `25/25/25/25`, `33/33/33`, `50/25/25`, and `50/50` can be applied to match risk preferences.
 - **Contract expiry protection** – Background monitor probes contract metadata and logs warnings before expiry (e.g., BIPZ2030). Use alerts to rotate contracts and temporarily disable entries.
 - **Demo & live modes** – Each account can run in `DEMO` (virtual ledger) or `LIVE` against real brokers without code changes.
@@ -240,12 +240,14 @@ Disable logging by omitting the payload from alerts or adjusting the helper in t
 
 ## 8. Risk Management & Contract Expiry
 
-- **Margin-optimized position sizing:** Per-strategy `capital_allocation_pct` aligns live sizing with TradingView simulations. The Agent uses API margin rates (intraday vs afterhours by entry time). A daily 3:55 PM ET check auto-closes positions that cannot afford afterhours margin (see Execution Guarantees).
-- **ADV cap (slip guard):** Caps size to a percentage of Average Daily Volume (default 1% ADV). Orders execute but are scaled down; entries are never blocked. Telegram alerts when capped.
-- **Per-partition safeguards:** `min_balance_usd` auto-disables slices; `enabled: false` disables a partition without redeploy.
-- **Strategy toggles:** Disable strategies in `config.yaml` to stop routing without changing alerts.
-- **Contract expiry:** Monitor logs warnings as nano futures approach expiry; use to roll charts and temporarily disable entries before settlement.
-- **Demo vs live parity:** Same sizing and guardrails in both modes; demo stages in ledger; `LIVE` sends to broker.
+- **Dynamic position sizing:** Global and per-strategy `capital_allocation_pct` keeps live sizing aligned with TradingView simulations. The Agent uses API margin rates (intraday vs afterhours by entry time). A daily 3:55 PM ET check auto-closes positions that cannot afford afterhours margin (see Execution Guarantees).
+- **ADV Cap (Slip Guard):** Enforces a cap on total per-symbol exposure across partitions. When projected exposure exceeds the cap the agent trims or skips orders and logs/announces the adjustment (default 1% ADV; Telegram alerts when capped).
+- **Per-partition safeguards:** Configure `min_balance_usd` to auto-disable aggressive slices, or set `enabled: false` on partitions during downtime.
+- **Strategy toggles:** Disable strategies in `config.yaml` to prevent routing without redeploying alerts.
+- **Contract expiry protection:** The contract monitor logs warnings as nano futures approach expiry (e.g., BIPZ2030). Use the alerts to roll TradingView charts to the new contract and temporarily disable entries before final settlement.
+- **Demo vs live parity:** Both modes use the same sizing/guardrails. Demo entries stage trades in the ledger; flipping to LIVE simply points orders at the broker.
+
+Additional safeguards (daily loss halts, liquidation telemetry) are scaffolded but not yet exposed as API endpoints; consult the roadmap below for status.
 
 ### Overnight & Weekend Margin Policy (CFM/Derivatives)
 
