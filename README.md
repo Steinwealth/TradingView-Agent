@@ -10,14 +10,102 @@
 
 ## 1. Overview
 
-TradingView Agent is a production-grade, serverless execution platform that converts TradingView strategy alerts into margin-optimized broker orders with real-time monitoring, partitioned capital management, and reconciliation. It works with any TradingView strategy that emits JSON via `alert()` (e.g. Ichimoku, trend-following, ORB). This system is not a trading strategy itself; it is the execution, monitoring, and capital orchestration layer that sits between signal generation (TradingView) and broker infrastructure. It is designed as a reusable execution and capital orchestration platform for systematic strategies, separating research (signal generation) from deployment (execution and monitoring) in a production cloud environment.
+TradingView Agent is a production-grade execution layer for TradingView strategies.
+
+It listens for TradingView webhook alerts and converts them into instant, margin-aware broker executions across supported crypto futures and equities accounts (Coinbase, Binance, Kraken, etc.).
+
+Its purpose is simple:
+
+**Eliminate execution latency and reliability risk between TradingView signals and broker fills.**
+
+It works with any TradingView strategy that emits JSON via `alert()` (e.g. Ichimoku, trend-following, ORB). This system is not a trading strategy itself; it is the execution, monitoring, and capital orchestration layer that sits between signal generation (TradingView) and broker infrastructure.
+
+### The Problem It Solves
+
+A TradingView strategy can be profitable in backtests — but live execution often fails due to:
+
+- Alert delivery delays
+- Missed or duplicate webhooks
+- Manual trade entry latency
+- Broker-side exit failures
+- Intraday → overnight margin changes
+- Capital collisions between strategies
+
+Profitable signals are meaningless if execution is unreliable.
+
+TradingView Agent exists to make execution deterministic, monitored, and risk-enforced.
+
+### What the Agent Does
+
+- Receives TradingView webhook alerts instantly.
+- Routes them to configured broker accounts.
+- Sizes positions using real-time margin rates.
+- Enforces partition-level capital isolation.
+- Verifies broker position state before exits.
+- Runs a 30-second exit monitor to mirror Pine Script logic.
+- Auto-flattens opposite positions.
+- Prevents duplicate exits.
+- Sends real-time Telegram trade alerts and daily summaries.
+- Scales to zero when no positions are open.
+
+It is not a strategy.
+
+It is the execution and monitoring engine behind your strategy.
 
 ### Why This Exists
 
-Most retail trading workflows couple research, signal generation, and execution in a single environment.
-This platform decouples them into independent layers, enabling production-grade monitoring, capital isolation, and cloud-native deployment.
+Most retail trading workflows couple research, signal generation, and execution in a single environment. This platform decouples them into independent layers, enabling production-grade monitoring, capital isolation, and cloud-native deployment.
 
-### System Characteristics
+---
+
+## 2. Exit Reliability Layer
+
+TradingView exit alerts can fail, arrive late, or be rate-limited.
+
+To mitigate this, the Agent runs its own 30-second monitoring loop that can replicate Pine Script exit logic, including:
+
+- RSI-based exits
+- Trailing stops
+- Breakeven logic
+- Stop loss / take profit
+- End-of-day auto-close
+- Ichimoku cloud exits
+
+Before any close order is sent, the Agent verifies broker position state to prevent duplicate exits.
+
+This creates a redundant exit system:
+
+**TradingView Exit → Webhook → Agent**  
+*or*  
+**Agent Monitor → Broker Verification → Close**
+
+Execution reliability does not depend on a single webhook.
+
+---
+
+## 3. Real-Time Trade Notifications
+
+The Agent integrates with Telegram (and configurable messaging channels) to provide:
+
+- Entry alerts (symbol, side, size, leverage)
+- Exit alerts (reason + source)
+- Commission cap warnings
+- Margin guard triggers
+- Contract expiry warnings
+- End-of-day performance summaries
+- Partition-level P&L reports
+
+Alerts include execution source:
+
+- **TradingView Webhook**
+- **Agent Exit Monitor**
+- **Afterhours Margin Checker**
+
+This ensures full visibility into live trading activity without logging into the broker.
+
+---
+
+## 4. System Characteristics
 
 - **Event-driven webhook architecture** — TradingView alerts (JSON) trigger validation, routing, sizing, and execution; no polling.
 - **Stateless compute with stateful Firestore reconciliation** — Cloud Run instances are stateless; partition state, trade history, and open positions persist in Firestore and are restored on startup.
@@ -36,18 +124,9 @@ This platform decouples them into independent layers, enabling production-grade 
 - Fail-safe over fail-fast — Exits always run; new entries halt on anomaly.
 - Cost-aware architecture — Designed to scale to zero when flat.
 
-### Capabilities (summary)
+---
 
-- **Execution** — Coinbase Advanced Trade (nano futures) and Binance USDⓈ-M; optional Base DEX spot bridge. Multi-account routing; margin-based position sizing with intraday/afterhours rate selection; ADV cap. Idempotent webhook handling with broker position verification before exits.
-- **Capital Management** — Virtual partitions (2–4 slices per account), isolated or cooperative styles; two-layer balance (virtual P&L per partition, shared real broker cash). Min-contract buffer for small accounts; partition-level capital enforcement.
-- **Monitoring & Safety** — 30-second agent-level exit loop (breakeven, RSI, trailing stop, stop loss, take profit, EOD auto-close, Ichimoku cloud). Contract expiry monitoring; commission cap auto-halt; duplicate-exit prevention and opposite-position auto-flatten. Telegram execution and EOD alerts.
-- **Infrastructure** — Declarative YAML config; Firestore-backed state; scale-to-zero serverless (weekend entry-blocking window); broker ↔ ledger reconciliation.
-
-> Always validate in DEMO mode before promoting to LIVE deployment.
-
-For preset and alert details see `docs/strategies/EASY_ICHIMOKU_GUIDE.md`.
-
-### Architecture
+## 5. Architecture
 
 ```
   TradingView (Pine strategy)
@@ -73,6 +152,19 @@ For preset and alert details see `docs/strategies/EASY_ICHIMOKU_GUIDE.md`.
   Broker API (demo ledger or live)
 ```
 
+---
+
+## 6. Capabilities
+
+- **Execution** — Coinbase Advanced Trade (nano futures) and Binance USDⓈ-M; optional Base DEX spot bridge. Multi-account routing; margin-based position sizing with intraday/afterhours rate selection; ADV cap. Idempotent webhook handling with broker position verification before exits.
+- **Capital Management** — Virtual partitions (2–4 slices per account), isolated or cooperative styles; two-layer balance (virtual P&L per partition, shared real broker cash). Min-contract buffer for small accounts; partition-level capital enforcement.
+- **Monitoring & Safety** — 30-second agent-level exit loop (breakeven, RSI, trailing stop, stop loss, take profit, EOD auto-close, Ichimoku cloud). Contract expiry monitoring; commission cap auto-halt; duplicate-exit prevention and opposite-position auto-flatten. Telegram execution and EOD alerts.
+- **Infrastructure** — Declarative YAML config; Firestore-backed state; scale-to-zero serverless (weekend entry-blocking window); broker ↔ ledger reconciliation.
+
+> Always validate in DEMO mode before promoting to LIVE deployment.
+
+For preset and alert details see `docs/strategies/EASY_ICHIMOKU_GUIDE.md`.
+
 ### Execution Guarantees
 
 - **Idempotent handling and broker verification** — Payload metadata (`bar_time`, `cid`, `client_tag`) supports request deduplication; every exit path checks broker position state before sending close orders, preventing double-closing and phantom exits. Agent exit monitor and TradingView webhook exits are coordinated under a single verification gate.
@@ -86,6 +178,22 @@ For preset and alert details see `docs/strategies/EASY_ICHIMOKU_GUIDE.md`.
 ### Non-Goals
 
 The Agent does **not** define trading logic (entries/exits are determined by TradingView or the configured agent-level exit presets). It does not replace the broker's margin or risk systems; it enforces allocation and sizing within broker limits. Strategy research, backtesting, and chart setup remain in TradingView and strategy repos; the Agent's scope is execution, monitoring, and capital orchestration only. It does not provide discretionary overrides, signal optimization, or backtesting functionality — those belong in research systems.
+
+### Key Capabilities
+
+- **Single-alert TradingView workflow** – One webhook per chart using `{{strategy.order.action}}` placeholders drives buy/sell/exit logic.
+- **Multi-account routing** – Multiple accounts can subscribe to the same `strategy_id`, each with its own broker, leverage and mode.
+- **Dynamic position sizing** – Global and per-strategy capital allocation settings (percent or fixed) align live sizing with backtests.
+- **ADV Cap (Slip Guard)** – Caps position sizes to a percentage of Average Daily Volume (default 1%). Orders are always executed but scaled down if they exceed the ADV cap—entries are never blocked.
+- **Multi-broker adapters** – Coinbase (Advanced Trade), Binance USDⓈ-M, and Base DEX spot are supported; others can be added via `brokers/*.py`.
+- **Virtual account partitions** – 2–4 virtual slices per broker account with independent balances, leverage, strategy lists and trade histories.
+- **Partition styles** – `isolated` compounding or `cooperative` rebalance-to-split; switchable through `config.yaml`.
+- **Cooperative routing** – In `cooperative` mode the agent assigns each new entry signal to the next available partition (FIFO). A partition must be idle (no open position) before it receives another signal.
+- **Partition split options** – Presets such as `25/25/25/25`, `33/33/33`, `50/25/25`, and `50/50` can be applied to match risk preferences.
+- **Contract expiry protection** – Background monitor probes contract metadata and logs warnings before expiry (e.g., BIPZ2030). Use alerts to rotate contracts and temporarily disable entries.
+- **Demo & live modes** – Each account can run in `DEMO` (virtual ledger) or `LIVE` against real brokers without code changes.
+- **Min-contract buffer & small accounts** – Configurable buffer (default 30%) above broker minimums; if a partition's balance is below the required wallet size, the Agent skips once and sends a single Telegram alert with the exact amount needed. See `docs/features/SMALL_ACCOUNT_TRADING_GUIDE.md`.
+- **Risk management** – Capital caps, ADV guard, optional minimum balances per partition, strategy enable/disable toggles, and daily summaries for oversight.
 
 ### Partition Styles
 
@@ -118,27 +226,59 @@ Disable logging by omitting the payload from alerts or adjusting the helper in t
 
 ---
 
-## 2. Key Capabilities
+## 7. Runtime Overview
 
-- **Single-alert TradingView workflow** – One webhook per chart using `{{strategy.order.action}}` placeholders drives buy/sell/exit logic.
-- **Multi-account routing** – Multiple accounts can subscribe to the same `strategy_id`, each with its own broker, leverage and mode.
-- **Dynamic position sizing** – Global and per-strategy capital allocation settings (percent or fixed) align live sizing with backtests.
-- **ADV Cap (Slip Guard)** – Caps position sizes to a percentage of Average Daily Volume (default 1%). Orders are always executed but scaled down if they exceed the ADV cap—entries are never blocked.
-- **Multi-broker adapters** – Coinbase (Advanced Trade), Binance USDⓈ-M, and Base DEX spot are supported; others can be added via `brokers/*.py`.
-- **Virtual account partitions** – 2–4 virtual slices per broker account with independent balances, leverage, strategy lists and trade histories.
-- **Partition styles** – `isolated` compounding or `cooperative` rebalance-to-split; switchable through `config.yaml`.
-- **Cooperative routing** – In `cooperative` mode the agent assigns each new entry signal to the next available partition (FIFO). A partition must be idle (no open position) before it receives another signal.
-- **Partition split options** – Presets such as `25/25/25/25`, `33/33/33`, `50/25/25`, and `50/50` can be applied to match risk preferences.
-- **Contract expiry protection** – Background monitor probes contract metadata and logs warnings before expiry (e.g., BIPZ2030). Use alerts to rotate contracts and temporarily disable entries.
-- **Demo & live modes** – Each account can run in `DEMO` (virtual ledger) or `LIVE` against real brokers without code changes.
-- **Min-contract buffer & small accounts** – Configurable buffer (default 30%) above broker minimums; if a partition's balance is below the required wallet size, the Agent skips once and sends a single Telegram alert with the exact amount needed. See `docs/features/SMALL_ACCOUNT_TRADING_GUIDE.md`.
-- **Risk management** – Capital caps, ADV guard, optional minimum balances per partition, strategy enable/disable toggles, and daily summaries for oversight.
+1. **Webhook ingress** – Validates payload, resolves strategy, target accounts, and partitions.
+2. **Broker routing** – Selects broker client per account (Coinbase Advanced Trade demo/live, Binance, Base DEX).
+3. **Position sizing** – Margin-optimized within allocation using API rates (intraday/afterhours by entry time); ADV cap; max capital and per-position caps. Auto-close for afterhours oversize: see §8 and Execution Guarantees.
+4. **Execution** – Market order (demo ledger or live broker); tracks legs and deployed cash. Close-opposite-before-opening when entry is opposite direction; coordinated with Agent exits (Execution Guarantees). Alerts include source (TradingView webhook / Agent Exit / Afterhours Position Checker) and exit reason.
+5. **Agent-level exit monitoring** – 30-second loop over open positions: breakeven, RSI, trailing stop, stop loss, take profit, EOD auto-close, Ichimoku cloud exits. Duplicate-exit prevention and broker position verification (Execution Guarantees). See `docs/AGENT_EXITS_AND_MONITORING_GUIDE.md` for presets.
+6. **Post-trade** – Firestore state and trade history updated; Telegram alerts with source and exit reason.
+7. **Daily summary** – Scheduler aggregates realized P&L, mark-to-market for open legs, EOD report to Telegram.
 
 ---
 
-## 3. Quick Start
+## 8. Risk Management & Contract Expiry
 
-### 3.1 Prerequisites
+- **Margin-optimized position sizing:** Per-strategy `capital_allocation_pct` aligns live sizing with TradingView simulations. The Agent uses API margin rates (intraday vs afterhours by entry time). A daily 3:55 PM ET check auto-closes positions that cannot afford afterhours margin (see Execution Guarantees).
+- **ADV cap (slip guard):** Caps size to a percentage of Average Daily Volume (default 1% ADV). Orders execute but are scaled down; entries are never blocked. Telegram alerts when capped.
+- **Per-partition safeguards:** `min_balance_usd` auto-disables slices; `enabled: false` disables a partition without redeploy.
+- **Strategy toggles:** Disable strategies in `config.yaml` to stop routing without changing alerts.
+- **Contract expiry:** Monitor logs warnings as nano futures approach expiry; use to roll charts and temporarily disable entries before settlement.
+- **Demo vs live parity:** Same sizing and guardrails in both modes; demo stages in ledger; `LIVE` sends to broker.
+
+### Overnight & Weekend Margin Policy (CFM/Derivatives)
+
+- **80/20 default** at 3× (≥20% free margin post-fill). Margin rate selection and auto-close are described in §8 and Execution Guarantees.
+- **24/7 trading:** `general.disable_entries_fri_sun: false` allows entries over weekends; margin logic and auto-close protect against overnight margin calls.
+- **Weekend entry blocking:** `general.disable_entries_fri_sun: true` blocks new entries Fri 4am PT–Mon 1am PT (exits always allowed); enables scale-to-zero.
+- **Scale-to-zero:** Service stays up until all positions close, then scales to zero. Cloud Scheduler wakes Monday 4:00 AM ET. See `docs/features/DEPLOYMENT_SCALE_TO_ZERO.md`.
+- **Commission cap** (default 0.04%) and broker retry/verify for blocked exits (see Execution Guarantees).
+
+---
+
+## 9. System Costs (Typical Monthly)
+
+| Component | Cost | Notes |
+|-----------|------|-------|
+| TradingView Plus | $24.95 | Required for webhook alerts. |
+| Google Cloud Run | ~$0.00–$15 | Free tier for scale-to-zero (min-instances: 0). Always-on (min-instances: 1) ≈ $15/mo. |
+| Secret Manager | ~$0.18 | First 6 secrets ≈ $0.18/mo; add $0.03 per extra secret. |
+| Firestore | ~$0.10–$0.30 | Depends on write volume for demo ledger/history. |
+| Coinbase Futures fees | 0.04% per side | Matches strategy backtest/forward test; demo mode can mirror this rate. |
+| Artifact Registry | ~$0.50 | Keep latest few source deploy images; add cleanup policy if needed. |
+| Cloud Scheduler | ~$0.10 | 6 jobs for scale-to-zero automation and daily EOD reports (negligible cost). |
+| Telegram | $0.00 | Bot + chat notifications are free. |
+
+Expected baseline: ~$25–$26 per month with scale-to-zero (dominated by the TradingView subscription). Always-on deployment adds ~$15/mo. Live trading incurs additional broker commissions according to trade volume.
+
+**Cost Optimization:** Enable scale-to-zero (`min-instances: 0`) and weekend entry blocking (`disable_entries_fri_sun: true`) to save 40–50% on Cloud Run costs. See `docs/features/DEPLOYMENT_SCALE_TO_ZERO.md` for setup.
+
+---
+
+## 10. Quick Start
+
+### 10.1 Prerequisites
 
 - TradingView Plus (webhooks enabled).
 - Google Cloud project with Billing enabled.
@@ -146,7 +286,7 @@ Disable logging by omitting the payload from alerts or adjusting the helper in t
 - Coinbase Advanced Trade API credentials (API key name + EdDSA private key). Binance keys are optional.
 - Telegram bot + chat ID if you want alerting (optional but recommended).
 
-### 3.2 Secrets (Google Secret Manager)
+### 10.2 Secrets (Google Secret Manager)
 
 ```bash
 # Set your GCP project ID
@@ -170,7 +310,7 @@ gcloud secrets versions add telegram-chat-id --data-file=/path/to/chat_id.txt
 
 > **Tip:** If you plan to enable Binance or another broker, create matching secrets (e.g., `binance-api-key-1`) and reference them in `config.yaml`.
 
-### 3.3 Configure `config.yaml`
+### 10.3 Configure `config.yaml`
 
 Key sections to review:
 
@@ -243,7 +383,7 @@ If any live fill reports a commission higher than that percentage of the filled 
 - Telegram posts **"COMMISSION CAP TRIGGERED"** with the observed/allowed rates.
 - Clear the cap via `/trading/enable` (or redeploy) once the broker confirms fees are back under the cap.
 
-### 3.4 Deploy to Cloud Run
+### 10.4 Deploy to Cloud Run
 
 **Option 1: Using cloudbuild.yaml (Recommended – Scale-to-Zero Enabled)**
 
@@ -289,7 +429,7 @@ This creates Cloud Scheduler jobs for automatic scale-to-zero on weekends and da
 
 > If you do not pass Telegram secrets the notifier will stay disabled and log the rendered messages.
 
-### 3.5 TradingView Alert (single alert per chart)
+### 10.5 TradingView Alert (single alert per chart)
 
 - **Condition:** `Any alert() function call` from your Pine strategy.
 - **Webhook URL:** `https://YOUR-AGENT-URL.run.app/webhook`
@@ -305,7 +445,7 @@ alert(
 
 ---
 
-## 4. Webhook Payload Contract
+## 11. Webhook Payload Contract
 
 `models/webhook_payload.WebhookPayload` accepts:
 
@@ -324,19 +464,7 @@ Payloads that omit required fields return HTTP 400 with validation details.
 
 ---
 
-## 5. Runtime Overview
-
-1. **Webhook ingress** – Validates payload, resolves strategy, target accounts, and partitions.
-2. **Broker routing** – Selects broker client per account (Coinbase Advanced Trade demo/live, Binance, Base DEX).
-3. **Position sizing** – Margin-optimized within 80% allocation using API rates (intraday/afterhours by entry time); ADV cap; max capital and per-position caps. Auto-close for afterhours oversize: see §7 and Execution Guarantees.
-4. **Execution** – Market order (demo ledger or live broker); tracks legs and deployed cash. Close-opposite-before-opening when entry is opposite direction; coordinated with Agent exits. Alerts include source (TradingView webhook / Agent Exit / Afterhours Position Checker) and exit reason.
-5. **Agent-level exit monitoring** – 30-second loop over open positions: breakeven, RSI, trailing stop, stop loss, take profit, EOD auto-close, Ichimoku cloud exits. Duplicate-exit prevention and broker position verification. See `docs/AGENT_EXITS_AND_MONITORING_GUIDE.md`.
-6. **Post-trade** – Firestore state and trade history updated; Telegram alerts with source and exit reason.
-7. **Daily summary** – Scheduler aggregates realized P&L, mark-to-market for open legs, EOD report to Telegram.
-
----
-
-## 6. REST Endpoints (core)
+## 12. REST Endpoints (core)
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -354,53 +482,7 @@ Admin/runtime: `POST /trading/disable`, `POST /trading/enable`, `POST /kill-swit
 
 ---
 
-## 7. Risk Management & Contract Expiry
-
-- **Margin-optimized position sizing:** Per-strategy `capital_allocation_pct` aligns live sizing with TradingView simulations. The Agent maximizes contracts within 80% allocation using API margin rates (intraday vs afterhours by entry time), typically yielding 2–9× more contracts than allocation-only sizing. Market hours (9:30–4:00 PM ET) and optional 6:01–10:00 PM ET window use intraday rates with afterhours validation; other times use afterhours rates. A daily 3:55 PM ET check auto-closes positions that cannot afford afterhours margin (see Execution Guarantees).
-- **ADV cap (slip guard):** Caps size to a percentage of Average Daily Volume (default 1% ADV). Orders execute but are scaled down; entries are never blocked. Telegram alerts when capped.
-- **Per-partition safeguards:** `min_balance_usd` auto-disables slices; `enabled: false` disables a partition without redeploy.
-- **Strategy toggles:** Disable strategies in `config.yaml` to stop routing without changing alerts.
-- **Contract expiry:** Monitor logs warnings as nano futures approach expiry; use to roll charts and temporarily disable entries before settlement.
-- **Demo vs live parity:** Same sizing and guardrails in both modes; demo stages in ledger; `LIVE` sends to broker.
-
-Additional safeguards (daily loss halts, liquidation telemetry) are scaffolded; see Roadmap for API status.
-
-### Overnight & Weekend Margin Policy (CFM/Derivatives)
-
-Coinbase Derivatives uses higher leverage intraday and raises maintenance/initial margin overnight and on weekends. Agent behavior:
-
-- **80/20 default** at 3× (≥20% free margin post-fill). Margin rate selection and auto-close are described in §7 and Execution Guarantees; config: `config.yaml` → `coinbase_futures`, `docs/SETTINGS.md`.
-- **24/7 trading:** `general.disable_entries_fri_sun: false` allows entries over weekends; margin logic and auto-close protect against overnight margin calls.
-- **Weekend entry blocking:** `general.disable_entries_fri_sun: true` blocks new entries Fri 4am PT–Mon 1am PT (exits always allowed); enables scale-to-zero.
-- **Scale-to-zero:** Service stays up until all positions close, then scales to zero (40–50% Cloud Run savings). Cloud Scheduler wakes Monday 4:00 AM ET. See `docs/features/DEPLOYMENT_SCALE_TO_ZERO.md`.
-- **Holiday guard:** Blocks entries 24h before/after US market holidays (ET); exits unaffected. Calendar: rules-based + optional low-volume days + manual dates in config.
-- **Commission cap** (default 0.04%) and broker retry/verify for blocked exits (see Execution Guarantees).
-- **Cooperative partitions:** Reconciler keeps virtual balances and risk telemetry aligned with broker as requirements change.
-
----
-
-## 8. System Costs (Typical Monthly)
-
-| Component | Cost | Notes |
-|-----------|------|-------|
-| TradingView Plus | $24.95 | Required for webhook alerts. |
-| Google Cloud Run | ~$0.00–$15 | Free tier for scale-to-zero (min-instances: 0). Always-on (min-instances: 1) ≈ $15/mo. |
-| Secret Manager | ~$0.18 | First 6 secrets ≈ $0.18/mo; add $0.03 per extra secret. |
-| Firestore | ~$0.10–$0.30 | Depends on write volume for demo ledger/history. |
-| Coinbase Futures fees | 0.04% per side | Applies to live trades; demo mode can mirror this rate. |
-| Artifact Registry | ~$0.50 | Keep latest few deploy images; add cleanup policy if needed. |
-| Cloud Scheduler | ~$0.10 | Jobs for scale-to-zero automation and daily EOD reports. |
-| Telegram | $0.00 | Bot + chat notifications are free. |
-
-Expected baseline: ~$25–$26 per month with scale-to-zero (dominated by the TradingView subscription). Always-on deployment adds ~$15/mo. Live trading incurs additional broker commissions according to trade volume.
-
-**Cost Optimization:** Enable scale-to-zero (`min-instances: 0`) and weekend entry blocking (`disable_entries_fri_sun: true`) to save 40–50% on Cloud Run costs. See `docs/features/DEPLOYMENT_SCALE_TO_ZERO.md` for setup.
-
-The system is intentionally engineered so that infrastructure cost remains negligible relative to strategy performance and broker fees, preserving capital efficiency.
-
----
-
-## 9. Supported Strategies & Presets
+## 13. Supported Strategies & Presets
 
 - **Easy Ichimoku v14 (Coinbase nano futures, 5m & 1h):** Production-ready presets for BTC, ETH, SOL, XRP. Alert payloads include `strategy_id` and optional `historical_enhancer`. See `docs/strategies/EASY_ICHIMOKU_GUIDE.md` for preset and alert details.
 - **Multi-account capability:** A single `strategy_id` can drive multiple accounts (e.g., demo + live, or different leverage partitions) without changing the TradingView alert.
@@ -409,7 +491,7 @@ The system is intentionally engineered so that infrastructure cost remains negli
 
 ---
 
-## 10. Testing & Validation Checklist
+## 14. Testing & Validation Checklist
 
 1. **Deploy in DEMO** – Confirm `/health` returns `status: degraded` only until the first heartbeat; after the broker monitor runs it should flip to `healthy`.
 2. **Reset ledger** – `POST /demo/reset/{account_id}` before starting a new test cycle (use the account id from your config, e.g. `coinbase-main`).
@@ -423,7 +505,7 @@ The system is intentionally engineered so that infrastructure cost remains negli
 
 ---
 
-## 11. Roadmap & Known Gaps
+## 15. Roadmap & Known Gaps
 
 - Expanded REST surface (`/positions`, `/partitions`, `/kill-switch`, `/balances`).
 - Automatic stop-loss / take-profit placement for live brokers.
@@ -435,7 +517,7 @@ Contributions or issue reports are welcome – open a PR or note gaps alongside 
 
 ---
 
-## 12. Documentation Map
+## 16. Documentation Map
 
 - `docs/TRADINGVIEW_AGENT_GUIDE.md` – end-to-end deployment + operations manual.
 - `docs/SETTINGS.md` – field-by-field explanation of `config.yaml` and environment toggles.
