@@ -1,0 +1,231 @@
+# TradingView Agent Configuration (V3.6 - Virtual Partitions)
+#
+# This file contains all configuration for the TradingView Agent
+# Secrets (API keys, tokens) are in .env file
+# Safe to commit to git (no secrets here!)
+
+# ============================================
+# GENERAL SETTINGS
+# ============================================
+general:
+  # Local timezone used for reporting/scheduling (IANA identifier)
+  local_timezone: America/Los_Angeles
+  # Percentage of equity allocated per trade (90.0 = 90%, 0.90 = 90%)
+  capital_allocation_pct: 90.0
+
+# ============================================
+# STRATEGIES
+# ============================================
+strategies:
+  - id: ichimoku-coinbase-btc-5m
+    name: Easy Ichimoku Coinbase BTC 5m
+    enabled: true
+    webhook_path: /webhook/ichimoku-coinbase-btc-5m
+    
+    # TradingView chart configuration
+    data_symbol: BIPZ2030
+    timeframe: 5min
+    
+    # Execution configuration
+    execution:
+      broker: coinbase_futures
+      product_id: BTC-PERP
+    
+    # Position sizing
+    sizing:
+      capital_alloc_pct: 90.0
+      min_position_usd: 10.0
+    
+    # Risk management
+    risk:
+      max_daily_loss_pct: 10.0
+      max_leverage: 5
+
+  - id: ichimoku-coinbase-eth-5m
+    name: Easy Ichimoku Coinbase ETH 5m
+    enabled: true
+    webhook_path: /webhook/ichimoku-coinbase-eth-5m
+    
+    data_symbol: ETPZ2030
+    timeframe: 5min
+    
+    execution:
+      broker: coinbase_futures
+      product_id: ETH-PERP
+    
+    sizing:
+      capital_alloc_pct: 90.0
+      min_position_usd: 10.0
+    
+    risk:
+      max_daily_loss_pct: 12.0
+      max_leverage: 5
+
+# ============================================
+# ACCOUNTS (V3.6 - WITH VIRTUAL PARTITIONS)
+# ============================================
+accounts:
+  # EXAMPLE: Account WITH Virtual Partitions (Recommended!)
+  - id: coinbase-main
+    enabled: true
+    mode: DEMO
+    label: Coinbase Main Account
+    
+    broker: coinbase_futures
+    
+    strategy_ids:
+      - ichimoku-coinbase-btc-5m
+      - ichimoku-coinbase-eth-5m
+    
+    # API credentials (single physical account)
+    api_key: ${COINBASE_API_KEY_1}
+    api_secret: ${COINBASE_API_SECRET_1}
+    api_passphrase: ${COINBASE_API_PASSPHRASE_1}
+    
+    # ============================================
+    # VIRTUAL PARTITION CONFIGURATION
+    # ============================================
+    partition_mode: enabled
+    
+    # Partition split options:
+    # - "50/50"       → 2 partitions, equal risk
+    # - "50/25/25"    → 3 partitions, conservative primary
+    # - "33/33/33"    → 3 partitions, equal risk (99% allocated)
+    # - "25/25/25/25" → 4 partitions, maximum diversification
+    partition_split: "25/25/25/25"
+    partition_style: isolated     # isolated = each partition compounds independently; cooperative = shared pool
+    
+    # Define virtual partitions (must match split count)
+    partitions:
+      - id: "25%-1-3x"
+        enabled: true
+        label: "25% Slot 1 (3x)"
+        allocation_pct: 25.0
+        leverage: 3
+        min_balance_usd: 50.0  # Auto-disable if below this
+        strategy_ids:
+          - ichimoku-coinbase-btc-5m
+          - ichimoku-coinbase-eth-5m
+          - ichimoku-coinbase-sol-5m
+          - ichimoku-coinbase-xrp-5m
+      
+      - id: "25%-2-3x"
+        enabled: true
+        label: "25% Slot 2 (3x)"
+        allocation_pct: 25.0
+        leverage: 3
+        min_balance_usd: 50.0
+        strategy_ids:
+          - ichimoku-coinbase-btc-5m
+          - ichimoku-coinbase-eth-5m
+          - ichimoku-coinbase-sol-5m
+          - ichimoku-coinbase-xrp-5m
+      
+      - id: "25%-3-3x"
+        enabled: true
+        label: "25% Slot 3 (3x)"
+        allocation_pct: 25.0
+        leverage: 3
+        min_balance_usd: 50.0
+        strategy_ids:
+          - ichimoku-coinbase-btc-5m
+          - ichimoku-coinbase-eth-5m
+          - ichimoku-coinbase-sol-5m
+          - ichimoku-coinbase-xrp-5m
+      
+      - id: "25%-4-3x"
+        enabled: true
+        label: "25% Slot 4 (3x)"
+        allocation_pct: 25.0
+        leverage: 3
+        min_balance_usd: 50.0
+        strategy_ids:
+          - ichimoku-coinbase-btc-5m
+          - ichimoku-coinbase-eth-5m
+          - ichimoku-coinbase-sol-5m
+          - ichimoku-coinbase-xrp-5m
+
+# ============================================
+# RISK MANAGEMENT
+# ============================================
+risk_management:
+  max_total_positions: 5
+  max_leverage_global: 5
+  enable_trading: true
+  max_commission_rate_pct: 0.04
+  
+  adv_cap:
+    enabled: true
+    cap_pct: 1.0
+    lookback_days: 7
+    min_volume_usd: 100000
+
+# ============================================
+# TELEGRAM (Optional)
+# ============================================
+telegram:
+  enabled: false
+  bot_token: ${TELEGRAM_BOT_TOKEN}
+  chat_id: ${TELEGRAM_CHAT_ID}
+
+# ============================================
+# DEPLOYMENT
+# ============================================
+deployment:
+  environment: production
+  gcp_project_id: ${GCP_PROJECT_ID}
+  region: us-central1
+  webhook_secret: ${WEBHOOK_SECRET}
+  admin_secret: ${ADMIN_SECRET}
+  allowed_ips: []
+
+# ============================================
+# MONITORING
+# ============================================
+monitoring:
+  use_firestore: true
+  firestore_collection: trades
+  log_level: INFO
+
+# ============================================
+# CONFIGURATION EXAMPLES
+# ============================================
+
+# Example: 50/50 Split (2 partitions)
+# partitions:
+#   - id: partition-conservative
+#     allocation_pct: 50.0
+#     leverage: 1
+#   - id: partition-aggressive
+#     allocation_pct: 50.0
+#     leverage: 5
+
+# Example: 33/33/33 Split (3 equal partitions)
+# partition_split: "33/33/33"
+# partitions:
+#   - id: 33%-btc-1x
+#     allocation_pct: 33.0
+#     leverage: 1
+#   - id: 33%-btc-3x
+#     allocation_pct: 33.0
+#     leverage: 3
+#   - id: 33%-btc-5x
+#     allocation_pct: 33.0
+#     leverage: 5
+
+# Example: 25/25/25/25 Split (4 partitions, maximum diversification)
+# partition_split: "25/25/25/25"
+# partitions:
+#   - id: 25%-btc-1x
+#     allocation_pct: 25.0
+#     leverage: 1
+#   - id: 25%-btc-2x
+#     allocation_pct: 25.0
+#     leverage: 2
+#   - id: 25%-1-3x
+#     allocation_pct: 25.0
+#     leverage: 3
+#   - id: 25%-btc-10x
+#     allocation_pct: 25.0
+#     leverage: 10
+

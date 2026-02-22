@@ -1,0 +1,59 @@
+# Google Cloud Build configuration for TradingView Agent
+# Optimized for scale-to-zero: scales to 0 on weekends when positions are flat
+# Auto-restarts Monday 4:00 AM ET (1am PT) via Cloud Scheduler
+
+steps:
+  # Build the container image
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'build-image'
+    args: ['build', '-t', 'gcr.io/$PROJECT_ID/tradingview-agent:latest', '-t', 'gcr.io/$PROJECT_ID/tradingview-agent:$BUILD_ID', '.']
+  
+  # Push the container image to Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/tradingview-agent:latest']
+  
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/tradingview-agent:$BUILD_ID']
+  
+  # Deploy container image to Cloud Run (Scale-to-Zero Optimized)
+  - name: 'gcr.io/cloud-builders/gcloud'
+    args:
+      - 'run'
+      - 'deploy'
+      - 'tradingview-agent'
+      - '--image'
+      - 'gcr.io/$PROJECT_ID/tradingview-agent:latest'
+      - '--region'
+      - 'us-central1'
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'
+      - '--memory'
+      - '512Mi'
+      - '--cpu'
+      - '1'
+      - '--concurrency'
+      - '80'
+      - '--max-instances'
+      - '1'  # Cost control: limit to 1 instance
+      - '--min-instances'
+      - '0'  # Scale to zero when idle (saves costs on weekends)
+      - '--timeout'
+      - '3600'
+      - '--port'
+      - '8080'
+      - '--update-secrets'
+      - 'COINBASE_API_KEY_1=coinbase-api-key-1:latest,COINBASE_PRIVATE_KEY_1=coinbase-private-key-1:latest,TELEGRAM_BOT_TOKEN=telegram-bot-token:latest,TELEGRAM_CHAT_ID=telegram-chat-id:latest'
+      - '--set-env-vars'
+      - 'HISTORICAL_ENHANCER_STORAGE=firestore,HISTORICAL_ENHANCER_FIRESTORE_COLLECTION=historical_enhancer,DISABLE_INTERNAL_EOD_SCHEDULER=true'
+
+# Store images in Google Artifact Registry
+images:
+  - 'gcr.io/$PROJECT_ID/tradingview-agent:latest'
+  - 'gcr.io/$PROJECT_ID/tradingview-agent:$BUILD_ID'
+
+# Build options (Cost-optimized)
+options:
+  logging: CLOUD_LOGGING_ONLY
+  diskSizeGb: 20  # Reduced for cost savings
+
